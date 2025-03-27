@@ -6,7 +6,7 @@ package upic.consumer.config;
  */
 public class RabbitMQConfig {
     // RabbitMQ connection parameters
-    public static final String HOST = System.getProperty("rabbitmq.host", "34.219.55.2");
+    public static final String HOST = System.getProperty("rabbitmq.host", "35.86.105.96");
     public static final int PORT = Integer.parseInt(System.getProperty("rabbitmq.port", "5672"));
     public static final String VIRTUAL_HOST = System.getProperty("rabbitmq.virtualHost", "/");
     public static final String USERNAME = System.getProperty("rabbitmq.username", "admin");

@@ -1,0 +1,14 @@
+[Unit]
+Description=Redis In-Memory Data Store
+After=network.target
+
+[Service]
+User=ec2-user
+Group=ec2-user
+ExecStart=/usr/local/bin/redis-startup.sh
+Restart=always
+Type=simple
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

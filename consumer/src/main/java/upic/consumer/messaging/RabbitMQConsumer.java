@@ -6,6 +6,10 @@ import upic.consumer.CircuitBreaker;
 import upic.consumer.config.CircuitBreakerConfig;
 import upic.consumer.config.RabbitMQConfig;
 import upic.consumer.model.LiftRideEvent;
+import upic.consumer.repository.ResortRepository;
+import upic.consumer.repository.SkierRepository;
+import upic.consumer.repository.impl.RedisResortRepository;
+import upic.consumer.repository.impl.RedisSkierRepository;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -21,7 +25,7 @@ import java.util.concurrent.atomic.LongAdder;
 
 /**
  * RabbitMQ consumer implementation with dynamic thread scaling, performance monitoring,
- * and circuit breaker pattern for resilience.
+ * circuit breaker pattern for resilience, and Redis persistence.
  */
 public class RabbitMQConsumer {
     // Configuration parameters
@@ -66,6 +70,12 @@ public class RabbitMQConsumer {
     // List of created channels for cleanup
     private final List<Channel> channels = Collections.synchronizedList(new ArrayList<>());
 
+    // Database repository
+    private final SkierRepository skierRepository;
+    private final ResortRepository resortRepository;
+    private final LongAdder databaseOperations = new LongAdder();
+    private final LongAdder databaseErrors = new LongAdder();
+
     /**
      * Constructor using default configuration.
      */
@@ -100,6 +110,8 @@ public class RabbitMQConsumer {
         this.queueName = queueName;
         this.prefetchCount = prefetchCount;
         this.autoAck = autoAck;
+        this.skierRepository = new RedisSkierRepository();
+        this.resortRepository = new RedisResortRepository();
 
         // Create thread pools with custom thread factory for better thread naming
         this.consumerExecutor = Executors.newFixedThreadPool(maxThreads, new ThreadFactory() {
@@ -425,20 +437,43 @@ public class RabbitMQConsumer {
     }
 
     /**
-     * Process a single lift ride event and store it in the skier data map.
+     * Add data to database
      */
     private void processMessage(LiftRideEvent event) {
         int skierId = event.getSkierId();
+
+        try {
+            skierRepository.recordLiftRide(
+                    event.getSkierId(),
+                    event.getResortId(),
+                    event.getLiftId(),
+                    event.getSeasonId(),
+                    event.getDayId(),
+                    event.getTime()
+            );
+
+            resortRepository.recordSkierVisit(
+                    event.getResortId(),
+                    event.getSkierId(),
+                    event.getSeasonId(),
+                    event.getDayId()
+            );
+
+            databaseOperations.increment();
+
+        } catch (Exception e) {
+            databaseErrors.increment();
+            System.err.println("Error storing data in Redis: " + e.getMessage());
+        }
+
+        skierData.computeIfAbsent(skierId, k ->
+                Collections.synchronizedList(new ArrayList<>())
+        ).add(event);
 
         // Add logging for 1% of messages
         if (Math.random() < 0.01) {
             System.out.println("Processing message for skierId: " + skierId);
         }
-
-        // Use computeIfAbsent to ensure we have a thread-safe list for each skier
-        skierData.computeIfAbsent(skierId, k ->
-                Collections.synchronizedList(new ArrayList<>())
-        ).add(event);
     }
 
     /**
@@ -453,6 +488,8 @@ public class RabbitMQConsumer {
                 int numSkiers = skierData.size();
                 int active = activeThreads.get();
                 int consumers = activeConsumers.get();
+                long dbOps = databaseOperations.sum();
+                long dbErrors = databaseErrors.sum();
 
                 System.out.println("\n=== Performance Statistics - " +
                         LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME) + " ===");
@@ -461,6 +498,8 @@ public class RabbitMQConsumer {
                 System.out.println("Total messages processed: " + processed);
                 System.out.println("Processing errors: " + errors);
                 System.out.println("Distinct skiers tracked: " + numSkiers);
+                System.out.println("Database operations: " + dbOps);
+                System.out.println("Database errors: " + dbErrors);
 
                 // Memory usage
                 Runtime runtime = Runtime.getRuntime();
