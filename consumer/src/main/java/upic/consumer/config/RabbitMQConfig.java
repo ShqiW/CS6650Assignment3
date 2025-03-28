@@ -1,9 +1,5 @@
 package upic.consumer.config;
 
-/**
- * Configuration class for RabbitMQ consumer component.
- * Centralizes all RabbitMQ-related consumer parameters.
- */
 public class RabbitMQConfig {
     // RabbitMQ connection parameters
     public static final String HOST = System.getProperty("rabbitmq.host", "35.160.7.42");
@@ -18,15 +14,20 @@ public class RabbitMQConfig {
     public static final boolean QUEUE_EXCLUSIVE = Boolean.parseBoolean(System.getProperty("rabbitmq.queueExclusive", "false"));
     public static final boolean QUEUE_AUTO_DELETE = Boolean.parseBoolean(System.getProperty("rabbitmq.queueAutoDelete", "false"));
 
-    // Consumer configuration
-    public static final int PREFETCH_COUNT = Integer.parseInt(System.getProperty("rabbitmq.prefetchCount", "250")); // Reduced from 500
-    public static final int CONSUMER_THREAD_COUNT = Integer.parseInt(System.getProperty("rabbitmq.consumerThreads", "200")); // Increased
-    public static final int MAX_CONSUMER_THREAD_COUNT = Integer.parseInt(System.getProperty("rabbitmq.maxConsumerThreads", "250")); // Increased
+    // Consumer configuration - optimized parameters
+    public static final int PREFETCH_COUNT = Integer.parseInt(System.getProperty("rabbitmq.prefetchCount", "500"));
+    public static final int CONSUMER_THREAD_COUNT = Integer.parseInt(System.getProperty("rabbitmq.consumerThreads", "200"));
+    public static final int MAX_CONSUMER_THREAD_COUNT = Integer.parseInt(System.getProperty("rabbitmq.maxConsumerThreads", "250"));
     public static final boolean AUTO_ACK = Boolean.parseBoolean(System.getProperty("rabbitmq.autoAck", "false"));
 
     // Batch processing configuration
-    public static final int BATCH_SIZE = Integer.parseInt(System.getProperty("rabbitmq.batchSize", "100"));
-    public static final long BATCH_FLUSH_INTERVAL_MS = Long.parseLong(System.getProperty("rabbitmq.batchFlushInterval", "100"));
+    public static final int BATCH_SIZE = Integer.parseInt(System.getProperty("rabbitmq.batchSize", "500")); // Increased from 100
+    public static final long BATCH_FLUSH_INTERVAL_MS = Long.parseLong(System.getProperty("rabbitmq.batchFlushInterval", "50")); // Decreased from 100
+
+    // Redis buffer configuration
+    public static final int REDIS_BUFFER_CAPACITY = Integer.parseInt(System.getProperty("redis.bufferCapacity", "100"));
+    public static final int REDIS_BUFFER_PROCESSOR_INTERVAL_MS = Integer.parseInt(System.getProperty("redis.bufferProcessorInterval", "50"));
+    public static final int REDIS_MAX_BATCH_COMBINE = Integer.parseInt(System.getProperty("redis.maxBatchCombine", "10"));
 
     // Connection pooling parameters
     public static final int CONNECTION_TIMEOUT = Integer.parseInt(System.getProperty("rabbitmq.connectionTimeout", "30000"));

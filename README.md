@@ -1,163 +1,166 @@
-# CS6650 Assignment 2 - Ski Resort Data Processing System Design and Implementation Report
+# CS6650 Assignment 3 Submission
 
-## 1. System Overview
+## Repository URL
+https://github.com/ShqiW/CS6650Assignment3
 
-This system is a distributed data collection and processing system developed for Upic ski resorts. It collects data when skiers use lifts, stores it in a message queue, and processes it via a consumer service. The system consists of four main components:
+## Database Design and Deployment Topology
 
-1. **Client** - Generates and sends ski lift event data
-2. **Server (Servlet)** - Receives client requests, validates data, and forwards it to the message queue
-3. **Message Queue (RabbitMQ)** - Acts as middleware between producer and consumer
-4. **Consumer** - Reads data from the queue and processes it
+### Database Selection: Redis
+For this project, Redis was selected as the database solution based on the following considerations:
+- High-performance in-memory data storage, suitable for processing high-throughput ski resort data
+- Support for complex data structures (sets, hash tables), meeting query requirements
+- Fast read/write operations, reducing message processing latency
 
-## 2. Project Structure
+### Data Model
+The Redis data model was designed as follows to support the required queries:
 
-The system uses a modular design, divided into four major parts: client, server, RabbitMQ middleware, and consumer service. Below is an overview of the key components:
+1. **Skier Day Records**:
+    - Key: `skier:{skierId}:season:{seasonId}:day:{dayId}`
+    - Type: Hash
+    - Fields:
+        - `vertical`: Total vertical distance (calculated as liftId * 10)
 
-### 2.1 Server Side
+2. **Skier Daily Lift Records**:
+    - Key: `skier:{skierId}:season:{seasonId}:day:{dayId}:lifts`
+    - Type: Set
+    - Values: Lift IDs ridden by the skier on that day
 
-```
-upic.server
-├── SkierServlet.java              # Main servlet handling skier data
-├── config
-│   ├── RabbitMQConfig.java        # RabbitMQ connection configuration
-│   └── ServerConfig.java          # Server global configuration parameters
-├── messaging
-│   ├── RabbitMQChannelPool.java   # RabbitMQ channel pool management
-│   └── RabbitMQPublisher.java     # Message publishing service
-└── model
-    ├── ErrorResponse.java         # Error response data model
-    ├── LiftRideEvent.java         # Lift ride event data model
-    └── SuccessResponse.java       # Success response data model
-```
+3. **Season Skiing Days Records**:
+    - Key: `skier:{skierId}:days:{seasonId}`
+    - Type: Set
+    - Values: Day IDs when the skier was active
 
-### 2.2 Consumer Side
+4. **Resort Visit Records**:
+    - Key: `resort:{resortId}:day:{dayId}:season:{seasonId}:skiers`
+    - Type: Set
+    - Values: Skier IDs who visited the resort on that day
 
-```
-upic.consumer
-├── CircuitBreaker.java            # Circuit breaker implementation for resilience
-├── Main.java                      # Consumer application entry point
-├── config
-│   ├── CircuitBreakerConfig.java  # Circuit breaker configuration
-│   └── RabbitMQConfig.java        # Consumer RabbitMQ configuration
-├── messaging
-│   └── RabbitMQConsumer.java      # Message consumption processing
-└── model
-    └── LiftRideEvent.java         # Same data model as server side
-```
+This model efficiently supports the required queries:
+- For skier N's ski days in a season: Get the size of the set `skier:{N}:days:{seasonId}`
+- For skier N's vertical totals per day: Get the `vertical` field from each day's hash
+- For skier N's lifts ridden each day: Get all members of `skier:{N}:season:{seasonId}:day:{dayId}:lifts` for each day
+- For unique skiers at resort X on day N: Get the size of the set `resort:{X}:day:{N}:season:{seasonId}:skiers`
 
-### 2.3 Client Side
+### Optimization Techniques
+1. **Batch Processing**:
+    - Using Redis pipelines for batched commands
+    - Implemented batch processing with a size of 500 events
+    - Batch flush interval of 50ms
 
-```
-upic.client
-├── SkiResortClient.java          # Client main class
-├── SingleThreadBenchmark.java    # Single-thread benchmark
-├── config
-│   └── ClientConfig.java         # Client configuration parameters
-├── model
-│   └── LiftRideEvent.java        # Lift ride event data model
-├── producer
-│   └── EventGenerator.java       # Random event generator
-└── sender
-    └── RequestSender.java        # HTTP request sender
-```
+2. **Connection Pool Management**:
+    - Using Jedis connection pooling
+    - Configured with a maximum of 128 connections
+    - Idle connections range from 8 to 32
 
-### 2.4 Load Balancing
+3. **Circuit Breaker Pattern**:
+    - Implemented CircuitBreaker class to enhance system resilience
+    - Automatically detects failures and temporarily blocks operations likely to fail
+    - Configurable error thresholds and reset timeouts
 
-The system uses AWS Elastic Load Balancer configured with 4 EC2 instances as server nodes. Additionally, the system includes a separate EC2 instance running RabbitMQ message queue and another EC2 instance running the consumer application.
+4. **Asynchronous Data Processing**:
+    - Using memory buffer queues (BlockingQueue) to temporarily store pending events
+    - Implementing producer-consumer pattern to separate data reception and processing
+    - Employing scheduled task executors (ScheduledExecutorService) to manage batch processing cycles
+    - Using Pipeline technology to execute multiple Redis commands in a single network round-trip
+    - Implementing degradation strategies when write buffers are full
 
-## 3. Server Design
+### AWS Deployment Architecture
+Based on the screenshots, the system is deployed across multiple EC2 instances on AWS:
 
-### 3.1 Architecture
+1. **Application Server Node** (t2.micro):
+    - Instance name: CS6650-Server-2 (running)
+    - Hosting Apache Tomcat and Java Servlet
+    - IP: 54.212.22.129
+    - Handles HTTP requests and validation
+    - Uses asynchronous request processing
 
-The server component is built using Java Servlet technology, employing asynchronous processing to improve capacity. The main classes include:
+2. **RabbitMQ Message Queue Server** (t2.micro):
+    - Instance name: CS6650-RabbitMQ (running)
+    - IP: 35.160.7.42
+    - Queue configuration:
+        - Durable queue and messages
+        - No auto-delete
+        - Prefetch count: 500
 
-- `SkierServlet` - Main entry point, handles HTTP requests, responsible for initialization and configuration
-- `RabbitMQPublisher` - Handles interaction with RabbitMQ, sends messages
-- `RabbitMQChannelPool` - Manages RabbitMQ channel resources, improves connection reuse efficiency
+3. **Redis Database Server** (t3.medium):
+    - Instance name: CS6650-DB-redis (running)
+    - IP: 34.221.66.95
+    - Running Redis database
+    - Memory policy: allkeys-lru
 
-### 3.2 Data Flow
+4. **Consumer Server** (t3.large):
+    - Instance name: CS6650-consumer (running)
+    - IP: 54.188.95.100
+    - Running RabbitMQ consumer
+    - Initial thread count: 200
+    - Maximum thread count: 250
+    - Batch size: 500
 
-1. Client sends a POST request to the `/skiers/resorts/{resortId}/seasons/{seasonId}/days/{dayId}/skiers/{skierId}` endpoint
-2. The `doPost` method of `SkierServlet` receives the request and initiates asynchronous processing
-3. Request parameters undergo comprehensive validation (URL path and JSON data)
-4. Upon validation, data is converted to JSON format and sent to the queue via `RabbitMQPublisher`
-5. A success response (HTTP 201) is returned to the client
+## System Resilience Design
 
-### 3.3 Key Technical Implementations
+To ensure system stability and reliability under high load, the following resilience designs were implemented:
 
-- **Asynchronous Request Processing**: Uses AsyncContext to improve concurrent processing capability
-- **Message Batching**: Collects multiple messages for one-time sending, reducing network overhead
-- **Channel Pooling**: Maintains a RabbitMQ channel pool, reducing the overhead of frequent creation and destruction
-- **Asynchronous Confirmation Mechanism**: Uses callback functions to handle message confirmations without blocking
+### Message Queue Management
+We employed multiple strategies to maintain stable queue lengths:
+1. Implementing batch processing to increase consumer throughput
+2. Dynamic thread scaling (adding consumer threads when queue depth exceeds 1000)
+3. Using circuit breakers during peak periods
 
-## 4. Consumer Design
+### System Resilience Implementation Mechanisms
+To prevent system overload and maintain stability, the following mechanisms were implemented:
 
-### 4.1 Key Components
+1. **Circuit Breaker Pattern**:
+    - Message processing circuit: Configured to trigger after 50 consecutive failures
+    - Message consumption circuit: Configured to trigger after 5 consecutive failures
+    - Providing automatic recovery and exponential backoff
 
-The consumer application is a standalone Java process responsible for reading and processing messages from the RabbitMQ queue. Main components include RabbitMQConsumer, CircuitBreaker, and thread-safe data storage structures.
+2. **Dynamic Thread Scaling**:
+    - Dynamically increasing consumer threads based on queue depth
+    - Reducing threads when queue messages are fewer than 100
+    - Maintaining optimal resource utilization balance
 
-### 4.2 Core Functions
+3. **Degradation Strategies**:
+    - Implementing direct processing when batch queues are full
+    - Implementing retry mechanisms when Redis connection pools are exhausted
+    - Processing all remaining messages during system shutdown
 
-- **Dynamic Thread Scaling**: Automatically adjusts the number of consumer threads based on queue depth
-- **Circuit Breaker Pattern**: Detects consecutive failures and temporarily blocks processing to prevent system cascade failures
-- **Performance Monitoring**: Tracks queue depth, processing rate, and memory usage
+## Detailed Asynchronous Data Processing Design
 
-## 5. Client Design
+The system implements an efficient asynchronous data processing pipeline, optimized at every stage from receiving HTTP requests to final persistence in the Redis database:
 
-### 5.1 Architecture
+### 1. Servlet Layer Asynchronous Processing
+- Using Servlet 3.0+ asynchronous features (AsyncContext) to process requests
+- Implementing non-blocking request processing to improve server concurrency
+- Returning to the client immediately after request validation, with background asynchronous data processing
+- Configuring dedicated thread pools for asynchronous request processing
 
-The client consists of SkiResortClient (main class), EventGenerator, RequestSender, and SingleThreadBenchmark (performance testing).
+### 2. Message Queue Asynchronous Publishing
+- Using RabbitMQ Channel pools to improve publishing efficiency
+- Implementing message batching, automatically flushing based on size and time intervals
+- Adopting Publisher Confirms mode to ensure reliable message delivery
+- Buffering pending messages through ConcurrentLinkedQueue
 
-### 5.2 Key Functions
+### 3. Consumer Multi-level Asynchronous Processing
+- Implementing a two-level buffer system:
+    1. **First-level buffer**: RabbitMQ queue, handling speed mismatches between producers and consumers
+    2. **Second-level buffer**: In-memory BatchQueue, aggregating messages for batch processing
 
-- **Two-Phase Sending Strategy**: Initial phase with 32 threads, followed by a phase handling remaining requests
-- **Event Queue Management**: Uses BlockingQueue to transfer data between event generation and request sending
-- **HTTP Request Sending**: Uses Java 11 HttpClient, supporting HTTP/2 and connection pooling
-- **Error Handling and Retry**: Implements a retry mechanism of up to 5 attempts for server errors
+- Consumer using asynchronous processing architecture:
+    1. Multiple threads retrieving messages from RabbitMQ
+    2. Adding messages to in-memory batch processing queue
+    3. Scheduled task processor batch submitting to Redis
 
-## 6. System Performance Optimization
+- Implementing adaptive batch processing strategy:
+    1. Fixed time interval (50ms) for processing batches
+    2. Dynamically adjusting batch size (maximum 500 messages)
+    3. Dynamically adjusting consumer thread count based on queue depth changes
 
-### 6.1 Key Optimization Techniques
+### 4. Monitoring and Control of Asynchronous Processing
+- Scheduled statistics reporting threads monitoring system performance
+- Implementing circuit breaker pattern to prevent system overload
+- Graceful shutdown mechanism ensuring all data is processed before system shutdown
 
-- **Asynchronous Processing**: Uses asynchronous Servlet and thread pools to process requests in parallel
-- **Batch Processing**: Message batching mechanism reduces RabbitMQ network round trips
-- **Connection Pooling**: Channel pool reduces connection resource creation and destruction overhead
-- **Parameter Optimization**: Tuning of key parameters for server and consumer
+This multi-level asynchronous processing architecture performed excellently in testing, efficiently handling client peak loads while maintaining stable operation across all system components.
 
-## 7. Use Guidance
-### 7.1 Client
-Update BASE_URL in ClientConfig to change server or Loadbalancer address
-```
-public static final String BASE_URL = System.getProperty("client.baseUrl", "http://CS6650-LB-4server-302525209.us-west-2.elb.amazonaws.com:8080/server-2.0-SNAPSHOT/skiers");
-```
-### 7.2 Servlet and Consumer
-Update HOST in RabbitMQConfig to use the correct RabbitMQ instance address. Also change the port if not using 5672
-```
-public static final String HOST = System.getProperty("rabbitmq.host", "34.219.55.2");
-public static final int PORT = Integer.parseInt(System.getProperty("rabbitmq.port", "5672"));
-```
-
-### 7.3 Run client
-```
-java -jar <path>/client-part1-1.0-SNAPSHOT-jar-with-dependencies.jar <initial thread for stage 1> <total requests> <queue size for statge 1> <run single thread benchmark>
-// Usage
-java -jar client-part1-1.0-SNAPSHOT-jar-with-dependencies.jar 32 200000 1000 false
-```
-
-## 8. Screenshots
-### 8.1 Single Server
-![](util/SingleServerRMQ.jpg)
-
-![](util/SingleServerThroughput.png)
-
-
-
-
-
-### 8.2 Load Balanced Performance
-![](util/LB4ServerRMQ.jpg)
-![](util/LB4ServerThroughput.jpg)
-
-
-
+## Output Screenshot
 

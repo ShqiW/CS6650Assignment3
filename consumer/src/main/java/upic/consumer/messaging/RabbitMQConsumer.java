@@ -328,11 +328,10 @@ public class RabbitMQConsumer {
         try {
             boolean processed = processMessageCircuitBreaker.execute(() -> {
                 try {
-                    // Batch write to Redis
+                    // Use the new buffered implementation
                     ((RedisSkierRepository)skierRepository).recordLiftRideBatch(batch);
-                    ((RedisResortRepository)resortRepository).recordSkierVisitBatch(batch);
 
-                    // Update in-memory data structure
+                    // Update in-memory data structure (optional, can be removed if memory usage is a concern)
                     for (LiftRideEvent event : batch) {
                         int skierId = event.getSkierId();
                         skierData.computeIfAbsent(skierId, k ->
