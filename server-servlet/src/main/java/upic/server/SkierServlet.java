@@ -70,11 +70,10 @@ public class SkierServlet extends HttpServlet {
 
       // Schedule stats reporting
       scheduledExecutor.scheduleAtFixedRate(
-              this::reportStats,
-              STATS_INTERVAL_MS,
-              STATS_INTERVAL_MS,
-              TimeUnit.MILLISECONDS
-      );
+          this::reportStats,
+          STATS_INTERVAL_MS,
+          STATS_INTERVAL_MS,
+          TimeUnit.MILLISECONDS);
 
       getServletContext().log("SkierServlet initialized successfully");
 
@@ -86,30 +85,30 @@ public class SkierServlet extends HttpServlet {
 
   @Override
   protected void doGet(HttpServletRequest req, HttpServletResponse res)
-          throws IOException {
+      throws IOException {
     res.setContentType("application/json");
     PrintWriter out = res.getWriter();
 
     // Create JSON response
     String jsonResponse = "{"
-            + "\"message\": \"Welcome to Ski Resort API\","
-            + "\"usage\": \"Please use POST method to submit ski lift rides\","
-            + "\"example\": {"
-            + "    \"skierId\": 123,"
-            + "    \"resortId\": 5,"
-            + "    \"liftId\": 15,"
-            + "    \"seasonId\": 2025,"
-            + "    \"dayId\": 1,"
-            + "    \"time\": 217"
-            + "  }"
-            + "}";
+        + "\"message\": \"Welcome to Ski Resort API\","
+        + "\"usage\": \"Please use POST method to submit ski lift rides\","
+        + "\"example\": {"
+        + "    \"skierId\": 123,"
+        + "    \"resortId\": 5,"
+        + "    \"liftId\": 15,"
+        + "    \"seasonId\": 2025,"
+        + "    \"dayId\": 1,"
+        + "    \"time\": 217"
+        + "  }"
+        + "}";
 
     out.print(jsonResponse);
   }
 
   @Override
   protected void doPost(HttpServletRequest req, HttpServletResponse resp)
-          throws ServletException, IOException {
+      throws ServletException, IOException {
     // Increment request counter
     requestsReceived.increment();
 
@@ -132,7 +131,7 @@ public class SkierServlet extends HttpServlet {
   private void processRequest(AsyncContext asyncContext) throws IOException {
     HttpServletRequest req = (HttpServletRequest) asyncContext.getRequest();
     HttpServletResponse resp = (HttpServletResponse) asyncContext.getResponse();
-    resp.setContentType("application/json");
+    resp.setContentType("text/plain");
     PrintWriter writer = resp.getWriter();
 
     String requestId = UUID.randomUUID().toString();
@@ -170,7 +169,11 @@ public class SkierServlet extends HttpServlet {
     LiftRideEvent liftRide;
 
     try {
-      liftRide = gson.fromJson(reader, LiftRideEvent.class);
+      String textLoad = reader.readLine();
+      if (textLoad == null || textLoad.isEmpty()) {
+        throw new JsonSyntaxException("Empty JSON payload");
+      }
+      liftRide = new LiftRideEvent(textLoad);
 
       // Handle null liftRide (which can happen if JSON is valid but empty)
       if (liftRide == null) {
@@ -184,7 +187,8 @@ public class SkierServlet extends HttpServlet {
     } catch (JsonSyntaxException e) {
       // CHANGED: Explicitly handle JSON parsing errors
       resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-      ErrorResponse error = new ErrorResponse("Invalid JSON format: " + e.getMessage(), HttpServletResponse.SC_BAD_REQUEST);
+      ErrorResponse error = new ErrorResponse("Invalid JSON format: " + e.getMessage(),
+          HttpServletResponse.SC_BAD_REQUEST);
       writer.write(gson.toJson(error));
       validationErrors.increment();
       asyncContext.complete();
@@ -202,13 +206,13 @@ public class SkierServlet extends HttpServlet {
 
     // Validate URL parameters match JSON body
     if (liftRide.getResortId() != urlResortId ||
-            liftRide.getSeasonId() != urlSeasonId ||
-            liftRide.getDayId() != urlDayId ||
-            liftRide.getSkierId() != urlSkierId) {
+        liftRide.getSeasonId() != urlSeasonId ||
+        liftRide.getDayId() != urlDayId ||
+        liftRide.getSkierId() != urlSkierId) {
       resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
       ErrorResponse error = new ErrorResponse(
-              "Mismatch between URL parameters and JSON body",
-              HttpServletResponse.SC_BAD_REQUEST);
+          "Mismatch between URL parameters and JSON body",
+          HttpServletResponse.SC_BAD_REQUEST);
       writer.write(gson.toJson(error));
       validationErrors.increment();
       asyncContext.complete();
@@ -217,7 +221,7 @@ public class SkierServlet extends HttpServlet {
 
     try {
       // Send message to RabbitMQ
-      String messageBody = gson.toJson(liftRide);
+      String messageBody = liftRide.toString();
       boolean publishSuccess = publisher.publishMessage(requestId, messageBody);
 
       if (publishSuccess) {
@@ -232,8 +236,8 @@ public class SkierServlet extends HttpServlet {
         messagingErrors.increment();
         resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
         ErrorResponse error = new ErrorResponse(
-                "Failed to publish message to queue",
-                HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            "Failed to publish message to queue",
+            HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
         writer.write(gson.toJson(error));
       }
 
@@ -244,7 +248,7 @@ public class SkierServlet extends HttpServlet {
       // Handle other exceptions
       resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
       ErrorResponse error = new ErrorResponse("Server error: " + e.getMessage(),
-              HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+          HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
       writer.write(gson.toJson(error));
       asyncContext.complete();
     }
@@ -253,13 +257,13 @@ public class SkierServlet extends HttpServlet {
   private void handleProcessingError(AsyncContext asyncContext, Exception e) {
     try {
       HttpServletResponse resp = (HttpServletResponse) asyncContext.getResponse();
-      resp.setContentType("application/json");
+      resp.setContentType("text/plain");
       PrintWriter writer = resp.getWriter();
 
       System.err.println("Error processing request: " + e.getMessage());
       resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
       ErrorResponse error = new ErrorResponse("Server error: " + e.getMessage(),
-              HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+          HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
       writer.write(gson.toJson(error));
     } catch (IOException ioe) {
       System.err.println("Error writing error response: " + ioe.getMessage());
@@ -279,9 +283,8 @@ public class SkierServlet extends HttpServlet {
     long maxMemoryMB = runtime.maxMemory() / (1024 * 1024);
 
     getServletContext().log(String.format(
-            "STATS: Received=%d, Processed=%d, Failed=%d, Sent=%d, Messaging_Errors=%d, Validation_Errors=%d, Memory=%dMB/%dMB",
-            received, processed, failed, sent, messaging_errors, validation_errors, usedMemoryMB, maxMemoryMB
-    ));
+        "STATS: Received=%d, Processed=%d, Failed=%d, Sent=%d, Messaging_Errors=%d, Validation_Errors=%d, Memory=%dMB/%dMB",
+        received, processed, failed, sent, messaging_errors, validation_errors, usedMemoryMB, maxMemoryMB));
   }
 
   private boolean isValidLiftRide(LiftRideEvent liftRide) {
@@ -289,15 +292,16 @@ public class SkierServlet extends HttpServlet {
       return false;
     }
     return liftRide.getSkierId() > 0 && liftRide.getSkierId() <= ServerConfig.MAX_SKIER_ID &&
-            liftRide.getResortId() > 0 && liftRide.getResortId() <= ServerConfig.MAX_RESORT_ID &&
-            liftRide.getLiftId() > 0 && liftRide.getLiftId() <= ServerConfig.MAX_LIFT_ID &&
-            liftRide.getSeasonId() == ServerConfig.SEASON_ID &&
-            liftRide.getDayId() == ServerConfig.MAX_DAY_ID &&
-            liftRide.getTime() > 0 && liftRide.getTime() <= ServerConfig.MAX_TIME;
+        liftRide.getResortId() > 0 && liftRide.getResortId() <= ServerConfig.MAX_RESORT_ID &&
+        liftRide.getLiftId() > 0 && liftRide.getLiftId() <= ServerConfig.MAX_LIFT_ID &&
+        liftRide.getSeasonId() == ServerConfig.SEASON_ID &&
+        liftRide.getDayId() == ServerConfig.MAX_DAY_ID &&
+        liftRide.getTime() > 0 && liftRide.getTime() <= ServerConfig.MAX_TIME;
   }
 
   private boolean isUrlValid(String urlPath) {
-    // Expected format: /resorts/{resortId}/seasons/{seasonId}/days/{dayId}/skiers/{skierId}
+    // Expected format:
+    // /resorts/{resortId}/seasons/{seasonId}/days/{dayId}/skiers/{skierId}
     if (urlPath == null || urlPath.isEmpty()) {
       return false;
     }
@@ -313,9 +317,9 @@ public class SkierServlet extends HttpServlet {
     }
 
     if (!urlParts[0].equals("resorts") ||
-            !urlParts[2].equals("seasons") ||
-            !urlParts[4].equals("days") ||
-            !urlParts[6].equals("skiers")) {
+        !urlParts[2].equals("seasons") ||
+        !urlParts[4].equals("days") ||
+        !urlParts[6].equals("skiers")) {
       return false;
     }
 
@@ -326,9 +330,9 @@ public class SkierServlet extends HttpServlet {
       int skierId = Integer.parseInt(urlParts[7]);
 
       return resortId > 0 && resortId <= ServerConfig.MAX_RESORT_ID &&
-              seasonId == ServerConfig.SEASON_ID &&
-              dayId == ServerConfig.MAX_DAY_ID &&
-              skierId > 0 && skierId <= ServerConfig.MAX_SKIER_ID;
+          seasonId == ServerConfig.SEASON_ID &&
+          dayId == ServerConfig.MAX_DAY_ID &&
+          skierId > 0 && skierId <= ServerConfig.MAX_SKIER_ID;
     } catch (NumberFormatException e) {
       return false;
     }

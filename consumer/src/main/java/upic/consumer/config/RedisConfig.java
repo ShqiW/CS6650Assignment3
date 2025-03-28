@@ -1,6 +1,5 @@
 package upic.consumer.config;
 
-
 public class RedisConfig {
     private String host;
     private int port;
@@ -10,13 +9,12 @@ public class RedisConfig {
     private int minIdle;
     private long maxWaitMillis;
 
-
     public static RedisConfig getDefaultConfig() {
         RedisConfig config = new RedisConfig();
-        config.setHost("35.162.22.180");
+        config.setHost(EnvLoader.getEnv("REDIS_BASE_ADDRESS", "44.247.53.252"));
         config.setPort(6379);
         config.setPassword("redis");
-        config.setMaxTotal(128);
+        config.setMaxTotal(256);
         config.setMaxIdle(32);
         config.setMinIdle(8);
         config.setMaxWaitMillis(10000);

@@ -14,6 +14,8 @@ public class Main {
 
         try {
             RedisConfig redisConfig = RedisConfig.getDefaultConfig();
+            System.out.println("Redis configuration loaded: " + redisConfig.getHost() + ":" + redisConfig.getPort());
+            // System.in.read();
             RedisConnector.initPool(redisConfig);
             System.out.println("Redis connection pool initialized");
 

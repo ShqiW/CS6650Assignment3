@@ -14,14 +14,15 @@ public class RedisConnector {
         poolConfig.setMaxIdle(config.getMaxIdle());
         poolConfig.setMinIdle(config.getMinIdle());
         poolConfig.setMaxWaitMillis(config.getMaxWaitMillis());
-        poolConfig.setTestOnBorrow(true);
-
+        poolConfig.setTestOnBorrow(false);
+        poolConfig.setTestOnReturn(false);
+        poolConfig.setTestWhileIdle(false);
+        poolConfig.setTestOnCreate(false);
         jedisPool = new JedisPool(poolConfig,
                 config.getHost(),
                 config.getPort(),
                 2000,
                 config.getPassword());
-
         try (Jedis jedis = jedisPool.getResource()) {
             System.out.println("Connected to Redis: " + jedis.ping());
         } catch (Exception e) {

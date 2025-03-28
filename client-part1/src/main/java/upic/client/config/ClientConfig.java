@@ -1,12 +1,20 @@
+
 package upic.client.config;
 
-public class ClientConfig {
-    // Base URL pointing to the AWS load balancer
-    public static final String BASE_URL = System.getProperty("client.baseUrl", "http://54.245.151.251:8080/server-2.0-SNAPSHOT/skiers");
-//    public static final String BASE_URL = System.getProperty("client.baseUrl", "http://cs6650-lb-2server-755356855.us-west-2.elb.amazonaws.com:8080/server-2.0-SNAPSHOT/skiers");
-//    public static final String BASE_URL = System.getProperty("client.baseUrl", "http://CS6650-LB-4server-302525209.us-west-2.elb.amazonaws.com:8080/server-2.0-SNAPSHOT/skiers");
-//  public static final String BASE_URL = "http://35.91.119.93:8081/skiers"; // server-Springboot
 
+public class ClientConfig {
+  // Base URL pointing to the AWS load balancer
+  public static final EnvLoader env = new EnvLoader();
+  public static final String SERVER_ADDRESS = EnvLoader.getEnv("CLIENT_BASE_ADDRESS", "52.38.20.77");
+
+  public static final String BASE_URL = System.getProperty("client.baseUrl",
+      String.format("http://%s:8080/server-2.0-SNAPSHOT/skiers", SERVER_ADDRESS));
+  // public static final String BASE_URL = System.getProperty("client.baseUrl",
+  // "http://cs6650-lb-2server-755356855.us-west-2.elb.amazonaws.com:8080/server-2.0-SNAPSHOT/skiers");
+  // public static final String BASE_URL = System.getProperty("client.baseUrl",
+  // "http://CS6650-LB-4server-302525209.us-west-2.elb.amazonaws.com:8080/server-2.0-SNAPSHOT/skiers");
+  // public static final String BASE_URL = "http://35.91.119.93:8081/skiers"; //
+  // server-Springboot
 
   // Performance configuration
   public static final int TOTAL_REQUESTS = 50000;
@@ -27,9 +35,9 @@ public class ClientConfig {
   public static final double BACKOFF_MULTIPLIER = 2.0;
 
   // Rate limiting configuration
-  public static final int REQUESTS_PER_SECOND_LIMIT = 500; //500-1000
+  public static final int REQUESTS_PER_SECOND_LIMIT = 500; // 500-1000
 
-  public static final int ADDITIONAL_THREAD = 100; //100-200
+  public static final int ADDITIONAL_THREAD = 100; // 100-200
 
   // Dynamic thread calculation
   public static int getOptimalThreadCount() {
@@ -38,19 +46,37 @@ public class ClientConfig {
 
     // Calculate based on CPU cores, allocating 8 threads per core
     int threadsByCpu = processors * 8;
-//
+    //
     // Calculate based on available memory, allocating 1 thread per 5MB of heap
-    int threadsByMemory = (int)(maxMemory / 5);
+    int threadsByMemory = (int) (maxMemory / 5);
 
-    // Use the minimum of both calculations, capped at 300 to avoid excessive connections
+    // Use the minimum of both calculations, capped at 300 to avoid excessive
+    // connections
     return Math.min(300, Math.min(threadsByCpu, threadsByMemory));
-//    return 400;
+    // return 400;
   }
 
-  public String getBaseUrl(){return BASE_URL;}
-  public int getTotalRequests(){return TOTAL_REQUESTS;}
-  public int getInitialThreads(){return INITIAL_THREADS;}
-  public int getRequestsPerThread(){return REQUESTS_PER_THREAD;}
-  public int getMaxRetryAttempts(){return MAX_RETRY_ATTEMPTS;}
-  public int getQueueSize(){return QUEUE_SIZE;}
+  public String getBaseUrl() {
+    return BASE_URL;
+  }
+
+  public int getTotalRequests() {
+    return TOTAL_REQUESTS;
+  }
+
+  public int getInitialThreads() {
+    return INITIAL_THREADS;
+  }
+
+  public int getRequestsPerThread() {
+    return REQUESTS_PER_THREAD;
+  }
+
+  public int getMaxRetryAttempts() {
+    return MAX_RETRY_ATTEMPTS;
+  }
+
+  public int getQueueSize() {
+    return QUEUE_SIZE;
+  }
 }

@@ -22,21 +22,30 @@ public class RedisSkierRepository implements SkierRepository {
         try (Jedis jedis = RedisConnector.getResource()) {
             // 使用管道以提高性能
             Pipeline pipeline = jedis.pipelined();
+            
+            // skier: s
+            // days: c
+            // day: d
+            // season: q
+            // lifts: l
+            // resort: r
+            // vertical: v
+            // time: t
 
             // 记录滑雪者的滑雪日
-            String dayKey = "skier:" + skierId + ":days:" + seasonId;
+            String dayKey = "s" + skierId + "c" + seasonId;
             pipeline.sadd(dayKey, String.valueOf(dayId));
 
             // 记录滑雪者在特定日期的乘坐
-            String liftRideKey = "skier:" + skierId + ":day:" + dayId + ":season:" + seasonId + ":lifts";
+            String liftRideKey = "s" + skierId + "d" + dayId + "q" + seasonId + "l";
             pipeline.rpush(liftRideKey, String.valueOf(liftId));
 
             // 记录滑雪时间
-            String timeKey = "skier:" + skierId + ":day:" + dayId + ":season:" + seasonId + ":time:" + liftId;
+            String timeKey = "s" + skierId + "d" + dayId + "q" + seasonId + "t" + liftId;
             pipeline.set(timeKey, String.valueOf(time));
 
             // 更新垂直总和
-            String verticalKey = "skier:" + skierId + ":day:" + dayId + ":season:" + seasonId + ":vertical";
+            String verticalKey = "s" + skierId + "d" + dayId + "q" + seasonId + "v";
             pipeline.incrBy(verticalKey, vertical);
 
             // 执行所有命令
@@ -47,7 +56,7 @@ public class RedisSkierRepository implements SkierRepository {
     @Override
     public int getDaysSkiedInSeason(int skierId, int seasonId) {
         try (Jedis jedis = RedisConnector.getResource()) {
-            String dayKey = "skier:" + skierId + ":days:" + seasonId;
+            String dayKey = "s" + skierId + "c" + seasonId;
             Set<String> days = jedis.smembers(dayKey);
             return days.size();
         }
@@ -57,11 +66,11 @@ public class RedisSkierRepository implements SkierRepository {
     public Map<String, Integer> getVerticalTotalsByDay(int skierId, int seasonId) {
         Map<String, Integer> results = new HashMap<>();
         try (Jedis jedis = RedisConnector.getResource()) {
-            String dayKey = "skier:" + skierId + ":days:" + seasonId;
+            String dayKey = "s" + skierId + "c" + seasonId;
             Set<String> days = jedis.smembers(dayKey);
 
             for (String day : days) {
-                String verticalKey = "skier:" + skierId + ":day:" + day + ":season:" + seasonId + ":vertical";
+                String verticalKey = "s" + skierId + "d" + day + "q" + seasonId + "v";
                 String value = jedis.get(verticalKey);
                 if (value != null) {
                     results.put(day, Integer.parseInt(value));
@@ -75,11 +84,11 @@ public class RedisSkierRepository implements SkierRepository {
     public Map<String, List<Integer>> getLiftsByDay(int skierId, int seasonId) {
         Map<String, List<Integer>> results = new HashMap<>();
         try (Jedis jedis = RedisConnector.getResource()) {
-            String dayKey = "skier:" + skierId + ":days:" + seasonId;
+            String dayKey = "s" + skierId + "c" + seasonId;
             Set<String> days = jedis.smembers(dayKey);
 
             for (String day : days) {
-                String liftRideKey = "skier:" + skierId + ":day:" + day + ":season:" + seasonId + ":lifts";
+                String liftRideKey = "s" + skierId + "d" + day + "q" + seasonId + "l";
                 List<String> liftsStr = jedis.lrange(liftRideKey, 0, -1);
                 List<Integer> lifts = liftsStr.stream()
                         .map(Integer::parseInt)
