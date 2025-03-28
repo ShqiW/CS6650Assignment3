@@ -12,7 +12,7 @@ import java.util.concurrent.TimeoutException;
  */
 public class RabbitMQConfig {
     // RabbitMQ connection parameters
-    private static final String HOST = System.getProperty("rabbitmq.host", "35.86.105.96");
+    private static final String HOST = System.getProperty("rabbitmq.host", "35.160.7.42");
     private static final int PORT = Integer.parseInt(System.getProperty("rabbitmq.port", "5672"));
     private static final String VIRTUAL_HOST = System.getProperty("rabbitmq.virtualHost", "/");
     private static final String USERNAME = System.getProperty("rabbitmq.username", "admin");

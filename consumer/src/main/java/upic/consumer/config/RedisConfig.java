@@ -13,7 +13,7 @@ public class RedisConfig {
 
     public static RedisConfig getDefaultConfig() {
         RedisConfig config = new RedisConfig();
-        config.setHost("35.162.22.180");
+        config.setHost("34.221.66.95");
         config.setPort(6379);
         config.setPassword("redis");
         config.setMaxTotal(128);

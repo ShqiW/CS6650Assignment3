@@ -1,13 +1,22 @@
 package upic.consumer.repository;
 
+import upic.consumer.model.LiftRideEvent;
+
+import java.util.List;
+
 public interface ResortRepository {
     /**
-     * 记录滑雪者到达度假村
+     * Record a skier visit to a resort
      */
     void recordSkierVisit(int resortId, int skierId, int seasonId, int dayId);
 
     /**
-     * 获取度假村某天的唯一滑雪者数量
+     * Record a batch of skier visits
+     */
+    void recordSkierVisitBatch(List<LiftRideEvent> events);
+
+    /**
+     * Get the count of unique skiers at a resort on a specific day
      */
     int getUniqueSkiersCount(int resortId, int dayId, int seasonId);
 }

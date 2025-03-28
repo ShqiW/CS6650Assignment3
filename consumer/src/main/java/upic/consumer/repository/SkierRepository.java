@@ -1,26 +1,33 @@
 package upic.consumer.repository;
 
+import upic.consumer.model.LiftRideEvent;
+
 import java.util.List;
 import java.util.Map;
 
 public interface SkierRepository {
     /**
-     * 记录滑雪者乘坐缆车事件
+     * Record a single lift ride event
      */
     void recordLiftRide(int skierId, int resortId, int liftId, int seasonId, int dayId, int time);
 
     /**
-     * 获取滑雪者在季节中滑雪的天数
+     * Record a batch of lift ride events
+     */
+    void recordLiftRideBatch(List<LiftRideEvent> events);
+
+    /**
+     * Get the number of days skied in a season
      */
     int getDaysSkiedInSeason(int skierId, int seasonId);
 
     /**
-     * 获取滑雪者在每个滑雪日的垂直总和
+     * Get vertical totals by day
      */
     Map<String, Integer> getVerticalTotalsByDay(int skierId, int seasonId);
 
     /**
-     * 获取滑雪者在每个滑雪日乘坐的缆车列表
+     * Get lifts ridden by day
      */
     Map<String, List<Integer>> getLiftsByDay(int skierId, int seasonId);
 }
