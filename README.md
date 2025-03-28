@@ -163,4 +163,18 @@ The system implements an efficient asynchronous data processing pipeline, optimi
 This multi-level asynchronous processing architecture performed excellently in testing, efficiently handling client peak loads while maintaining stable operation across all system components.
 
 ## Output Screenshot
+I tried run client both on local and EC2. Although EC2 has better throughput, the queue length is stable.
 
+### 1. Run client locally
+![](util/RunClientLocal-rmq.png)
+![](util/RunClientLoacal-ClientOutput.png)
+
+### 2. Run client on EC2
+![](util/RunClientEC2-rmq.png)
+![](util/RunClientEC2-ClientOutput.png)
+
+### 3. Database-Redis
+![](util/DB-redis.png)
+
+### 4. AWS EC2 Dashboard
+![](util/AWS-EC2-dashboard.png)
