@@ -2,7 +2,7 @@ package upic.client.config;
 
 public class ClientConfig {
     // Base URL pointing to the AWS load balancer
-    public static final String BASE_URL = System.getProperty("client.baseUrl", "http://54.245.151.251:8080/server-2.0-SNAPSHOT/skiers");
+    public static final String BASE_URL = System.getProperty("client.baseUrl", "http://54.212.22.129:8080/server-2.0-SNAPSHOT/skiers");
 //    public static final String BASE_URL = System.getProperty("client.baseUrl", "http://cs6650-lb-2server-755356855.us-west-2.elb.amazonaws.com:8080/server-2.0-SNAPSHOT/skiers");
 //    public static final String BASE_URL = System.getProperty("client.baseUrl", "http://CS6650-LB-4server-302525209.us-west-2.elb.amazonaws.com:8080/server-2.0-SNAPSHOT/skiers");
 //  public static final String BASE_URL = "http://35.91.119.93:8081/skiers"; // server-Springboot

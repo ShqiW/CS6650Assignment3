@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.LongAdder;
  * circuit breaker pattern for resilience, and Redis persistence.
  */
 public class RabbitMQConsumer {
-    // Configuration parameters
+    // Existing member variables
     private final int initialThreads;
     private final int maxThreads;
     private final String host;
@@ -40,20 +40,16 @@ public class RabbitMQConsumer {
     private final int prefetchCount;
     private final boolean autoAck;
 
-    // Services and utilities
     private final ExecutorService consumerExecutor;
     private final ScheduledExecutorService scheduledExecutor;
     private final Connection connection;
     private final Gson gson;
 
-    // Circuit breakers
     private final CircuitBreaker consumeMessageCircuitBreaker;
     private final CircuitBreaker processMessageCircuitBreaker;
 
-    // Data storage for skier events - thread-safe hash map
     private final ConcurrentHashMap<Integer, List<LiftRideEvent>> skierData = new ConcurrentHashMap<>();
 
-    // Performance tracking
     private final LongAdder messagesProcessed = new LongAdder();
     private final LongAdder messagesPerSecond = new LongAdder();
     private final LongAdder processingErrors = new LongAdder();
@@ -62,23 +58,23 @@ public class RabbitMQConsumer {
     private final AtomicInteger activeThreads = new AtomicInteger(0);
     private final AtomicInteger activeConsumers = new AtomicInteger(0);
 
-    // Control flags
     private volatile boolean running = true;
     private final CountDownLatch shutdownLatch = new CountDownLatch(1);
     private final AtomicBoolean queueDeclared = new AtomicBoolean(false);
 
-    // List of created channels for cleanup
     private final List<Channel> channels = Collections.synchronizedList(new ArrayList<>());
 
-    // Database repository
     private final SkierRepository skierRepository;
     private final ResortRepository resortRepository;
     private final LongAdder databaseOperations = new LongAdder();
     private final LongAdder databaseErrors = new LongAdder();
 
-    /**
-     * Constructor using default configuration.
-     */
+    // New batch processing members
+    private final BlockingQueue<LiftRideEvent> eventBatchQueue = new LinkedBlockingQueue<>(10000);
+    private final LongAdder batchesProcessed = new LongAdder();
+    private final LongAdder batchProcessTime = new LongAdder();
+    private final LongAdder batchSizes = new LongAdder();
+
     public RabbitMQConsumer() throws Exception {
         this(
                 RabbitMQConfig.CONSUMER_THREAD_COUNT,
@@ -94,9 +90,6 @@ public class RabbitMQConsumer {
         );
     }
 
-    /**
-     * Full constructor with all parameters.
-     */
     public RabbitMQConsumer(int initialThreads, int maxThreads, String host, int port,
                             String virtualHost, String username, String password,
                             String queueName, int prefetchCount, boolean autoAck) throws Exception {
@@ -113,7 +106,6 @@ public class RabbitMQConsumer {
         this.skierRepository = new RedisSkierRepository();
         this.resortRepository = new RedisResortRepository();
 
-        // Create thread pools with custom thread factory for better thread naming
         this.consumerExecutor = Executors.newFixedThreadPool(maxThreads, new ThreadFactory() {
             private final AtomicInteger counter = new AtomicInteger(0);
             @Override
@@ -126,7 +118,6 @@ public class RabbitMQConsumer {
 
         this.scheduledExecutor = Executors.newScheduledThreadPool(2);
 
-        // Setup RabbitMQ connection with improved error handling
         try {
             ConnectionFactory factory = new ConnectionFactory();
             factory.setHost(host);
@@ -151,28 +142,23 @@ public class RabbitMQConsumer {
             throw e;
         }
 
-        // Setup Gson for JSON parsing
         this.gson = new Gson();
 
-        // Initialize circuit breakers
         CircuitBreakerConfig consumeConfig = new CircuitBreakerConfig(
                 "RabbitMQ-Consume",
-                5,  // Failure threshold
-                10000  // Reset timeout in ms
+                5,
+                10000
         );
         this.consumeMessageCircuitBreaker = new CircuitBreaker(consumeConfig, circuitBreakerTrips, circuitBreakerSuccessfulRetries);
 
         CircuitBreakerConfig processConfig = new CircuitBreakerConfig(
                 "Message-Processing",
-                50,  // Failure threshold - increased from 5 to 50
-                5000  // Reset timeout in ms - decreased from 10000 to 5000
+                50,
+                5000
         );
         this.processMessageCircuitBreaker = new CircuitBreaker(processConfig, circuitBreakerTrips, circuitBreakerSuccessfulRetries);
     }
 
-    /**
-     * Declare the queue if it doesn't exist.
-     */
     private void declareQueue(Channel channel) throws IOException {
         if (!queueDeclared.getAndSet(true)) {
             System.out.println("Attempting to declare queue: " + queueName);
@@ -194,9 +180,6 @@ public class RabbitMQConsumer {
         }
     }
 
-    /**
-     * Start the consumer with initial threads.
-     */
     public void start() {
         System.out.println("====================================================");
         System.out.println("Starting RabbitMQ Consumer with " + initialThreads + " initial threads");
@@ -208,7 +191,12 @@ public class RabbitMQConsumer {
         System.out.println(" - Max Threads: " + maxThreads);
         System.out.println(" - Prefetch Count: " + prefetchCount);
         System.out.println(" - Auto Ack: " + autoAck);
+        System.out.println(" - Batch Size: " + RabbitMQConfig.BATCH_SIZE);
+        System.out.println(" - Batch Flush Interval: " + RabbitMQConfig.BATCH_FLUSH_INTERVAL_MS + "ms");
         System.out.println("====================================================");
+
+        // Start batch processor
+        startBatchProcessor();
 
         // Start background monitoring tasks
         startStatsReporting();
@@ -221,9 +209,18 @@ public class RabbitMQConsumer {
         }
     }
 
-    /**
-     * Start a single consumer thread.
-     */
+    private void startBatchProcessor() {
+        scheduledExecutor.scheduleAtFixedRate(
+                this::processBatch,
+                RabbitMQConfig.BATCH_FLUSH_INTERVAL_MS,
+                RabbitMQConfig.BATCH_FLUSH_INTERVAL_MS,
+                TimeUnit.MILLISECONDS
+        );
+
+        System.out.println("Batch processor started with batch size: " + RabbitMQConfig.BATCH_SIZE +
+                " and interval: " + RabbitMQConfig.BATCH_FLUSH_INTERVAL_MS + "ms");
+    }
+
     private void startConsumerThread(int threadId) {
         consumerExecutor.submit(() -> {
             System.out.println("Consumer thread #" + threadId + " started");
@@ -250,36 +247,32 @@ public class RabbitMQConsumer {
         });
     }
 
-    /**
-     * Start a consumer on the given channel.
-     */
     private void startConsumer(Channel channel, int threadId) {
         try {
-            // Create a consumer that processes messages
             DeliverCallback deliverCallback = (consumerTag, delivery) -> {
                 try {
                     String message = new String(delivery.getBody(), StandardCharsets.UTF_8);
 
-                    // Process message with circuit breaker protection
                     boolean processed = processMessageCircuitBreaker.execute(() -> {
-                        // Parse JSON message body
                         LiftRideEvent liftRideEvent = gson.fromJson(message, LiftRideEvent.class);
 
-                        // Process message and update skier data
-                        processMessage(liftRideEvent);
+                        // Add to batch queue instead of direct processing
+                        boolean added = eventBatchQueue.offer(liftRideEvent);
 
-                        // Update statistics
+                        if (!added) {
+                            // Process directly if queue is full
+                            processMessage(liftRideEvent);
+                        }
+
                         messagesProcessed.increment();
                         messagesPerSecond.increment();
 
                         return true;
                     });
 
-                    // Only acknowledge if processing was successful
                     if (processed && !autoAck) {
                         channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
                     } else if (!processed && !autoAck) {
-                        // Negative acknowledgment, requeue the message
                         channel.basicNack(delivery.getEnvelope().getDeliveryTag(), false, true);
                     }
                 } catch (Exception e) {
@@ -287,7 +280,6 @@ public class RabbitMQConsumer {
                     System.err.println("Thread #" + threadId + " error processing message: " + e.getMessage());
 
                     if (!autoAck) {
-                        // Negative acknowledgment with requeue on exception
                         try {
                             channel.basicNack(delivery.getEnvelope().getDeliveryTag(), false, true);
                         } catch (IOException ackError) {
@@ -297,29 +289,23 @@ public class RabbitMQConsumer {
                 }
             };
 
-            // Cancel callback
             CancelCallback cancelCallback = consumerTag ->
                     System.out.println("Consumer " + consumerTag + " cancelled");
 
-            // Start consuming with additional logging
             System.out.println("Thread #" + threadId + " declaring consuming from queue: " + queueName);
             System.out.println("Thread #" + threadId + " prefetch count: " + prefetchCount);
             System.out.println("Thread #" + threadId + " autoAck: " + autoAck);
 
             String consumerTag = "consumer-" + threadId + "-" + System.currentTimeMillis();
-
-            // Start consuming and get actual tag
             String actualTag = channel.basicConsume(queueName, autoAck, consumerTag, deliverCallback, cancelCallback);
             activeConsumers.incrementAndGet();
 
             System.out.println("Consumer registered successfully with tag: " + actualTag);
 
-            // Keep thread alive until shutdown
             while (running && !Thread.currentThread().isInterrupted()) {
                 Thread.sleep(1000);
             }
 
-            // Cancel the consumer on shutdown
             channel.basicCancel(actualTag);
             activeConsumers.decrementAndGet();
 
@@ -329,119 +315,62 @@ public class RabbitMQConsumer {
         }
     }
 
-    private void startQueueMonitoring() {
-        scheduledExecutor.scheduleAtFixedRate(() -> {
-            try {
-                // Create temporary channel to get queue information
-                Channel monitorChannel = connection.createChannel();
+    private void processBatch() {
+        List<LiftRideEvent> batch = new ArrayList<>(RabbitMQConfig.BATCH_SIZE);
+        int drained = eventBatchQueue.drainTo(batch, RabbitMQConfig.BATCH_SIZE);
 
-                // Get queue status and depth
-                AMQP.Queue.DeclareOk queueInfo = monitorChannel.queueDeclarePassive(queueName);
-                int messagesInQueue = queueInfo.getMessageCount();
-
-                System.out.println("\n=== Queue Status - " +
-                        LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME) + " ===");
-                System.out.println("Current queue depth: " + messagesInQueue + " messages");
-                System.out.println("Active consumer threads: " + activeThreads.get());
-                System.out.println("Active consumers: " + activeConsumers.get());
-
-                // Adjust thread count based on queue depth
-                adjustThreadCount(messagesInQueue);
-
-                // Close monitoring channel
-                monitorChannel.close();
-
-            } catch (Exception e) {
-                System.err.println("Error monitoring queue: " + e.getMessage());
-            }
-        }, 5000, 5000, TimeUnit.MILLISECONDS);
-    }
-
-    private void startCircuitBreakerMonitoring() {
-        scheduledExecutor.scheduleAtFixedRate(() -> {
-            try {
-                System.out.println("\n=== Circuit Breaker Status - " +
-                        LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME) + " ===");
-
-                // Report message consumption circuit breaker status
-                System.out.println("Consume Message Circuit: " + consumeMessageCircuitBreaker.getState() +
-                        " (Failures: " + consumeMessageCircuitBreaker.getFailureCount() +
-                        ", Successes: " + consumeMessageCircuitBreaker.getSuccessCount() + ")");
-
-                // Report message processing circuit breaker status
-                System.out.println("Process Message Circuit: " + processMessageCircuitBreaker.getState() +
-                        " (Failures: " + processMessageCircuitBreaker.getFailureCount() +
-                        ", Successes: " + processMessageCircuitBreaker.getSuccessCount() + ")");
-
-                // Report overall statistics
-                System.out.println("Total circuit breaker trips: " + circuitBreakerTrips.sum());
-                System.out.println("Successful retries: " + circuitBreakerSuccessfulRetries.sum());
-
-            } catch (Exception e) {
-                System.err.println("Error monitoring circuit breakers: " + e.getMessage());
-            }
-        }, 10000, 10000, TimeUnit.MILLISECONDS);
-    }
-
-    /**
-     * Dynamically adjust thread count based on queue depth.
-     */
-    private void adjustThreadCount(int messagesInQueue) {
-        int currentThreads = activeThreads.get();
-
-        // More aggressive thread scaling logic
-        if (messagesInQueue > 100 && currentThreads < maxThreads) {
-            // Calculate threads to add based on queue depth
-            int threadsToAdd = Math.min(
-                    Math.max(5, messagesInQueue / 1000), // Based on queue depth
-                    maxThreads - currentThreads
-            );
-            System.out.println("Adding " + threadsToAdd + " consumer threads due to high queue depth: " + messagesInQueue);
-
-            for (int i = 0; i < threadsToAdd; i++) {
-                startConsumerThread(-1); // -1 indicates a dynamically added thread
-            }
-        } else if (messagesInQueue < RabbitMQConfig.LOW_QUEUE_THRESHOLD && currentThreads > initialThreads) {
-            // Queue is nearly empty, we can reduce threads
-            // This is handled passively - we don't forcibly stop threads, but just note that we could
-            // use fewer threads. This avoids interrupting work in progress.
-            System.out.println("Queue depth is low. Could reduce by " +
-                    Math.min(RabbitMQConfig.THREADS_TO_REMOVE, currentThreads - initialThreads) +
-                    " threads when current work completes.");
+        if (batch.isEmpty()) {
+            return;
         }
-    }
 
-    /**
-     * Process a message with circuit breaker protection.
-     */
-    private boolean processMessageWithCircuitBreaker(String messageBody) {
+        long startTime = System.currentTimeMillis();
+
         try {
-            return processMessageCircuitBreaker.execute(() -> {
-                // Parse JSON message body
-                LiftRideEvent liftRideEvent = gson.fromJson(messageBody, LiftRideEvent.class);
+            boolean processed = processMessageCircuitBreaker.execute(() -> {
+                try {
+                    // Batch write to Redis
+                    ((RedisSkierRepository)skierRepository).recordLiftRideBatch(batch);
+                    ((RedisResortRepository)resortRepository).recordSkierVisitBatch(batch);
 
-                // Process message and update skier data
-                processMessage(liftRideEvent);
+                    // Update in-memory data structure
+                    for (LiftRideEvent event : batch) {
+                        int skierId = event.getSkierId();
+                        skierData.computeIfAbsent(skierId, k ->
+                                Collections.synchronizedList(new ArrayList<>())
+                        ).add(event);
+                    }
 
-                // Update statistics
-                messagesProcessed.increment();
-                messagesPerSecond.increment();
-
-                return true;
+                    // Update statistics
+                    databaseOperations.add(batch.size());
+                    return true;
+                } catch (Exception e) {
+                    databaseErrors.add(batch.size());
+                    System.err.println("Error batch processing in Redis: " + e.getMessage());
+                    return false;
+                }
             });
+
+            if (!processed) {
+                processingErrors.add(batch.size());
+            }
+
+            // Update batch metrics
+            long processingTime = System.currentTimeMillis() - startTime;
+            batchProcessTime.add(processingTime);
+            batchesProcessed.increment();
+            batchSizes.add(batch.size());
+
+            if (drained % 20 == 0) { // Log only 5% of batches
+                System.out.println("Processed batch of " + drained + " messages in " + processingTime + "ms");
+            }
+
         } catch (Exception e) {
-            processingErrors.increment();
-            System.err.println("Error processing message: " + e.getMessage());
-            return false;
+            processingErrors.add(batch.size());
+            System.err.println("Circuit breaker prevented batch processing: " + e.getMessage());
         }
     }
 
-    /**
-     * Add data to database
-     */
     private void processMessage(LiftRideEvent event) {
-        int skierId = event.getSkierId();
-
         try {
             skierRepository.recordLiftRide(
                     event.getSkierId(),
@@ -466,19 +395,59 @@ public class RabbitMQConsumer {
             System.err.println("Error storing data in Redis: " + e.getMessage());
         }
 
-        skierData.computeIfAbsent(skierId, k ->
+        skierData.computeIfAbsent(event.getSkierId(), k ->
                 Collections.synchronizedList(new ArrayList<>())
         ).add(event);
-
-        // Add logging for 1% of messages
-        if (Math.random() < 0.01) {
-            System.out.println("Processing message for skierId: " + skierId);
-        }
     }
 
-    /**
-     * Start periodic statistics reporting.
-     */
+    private void startQueueMonitoring() {
+        scheduledExecutor.scheduleAtFixedRate(() -> {
+            try {
+                Channel monitorChannel = connection.createChannel();
+
+                AMQP.Queue.DeclareOk queueInfo = monitorChannel.queueDeclarePassive(queueName);
+                int messagesInQueue = queueInfo.getMessageCount();
+
+                System.out.println("\n=== Queue Status - " +
+                        LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME) + " ===");
+                System.out.println("Current queue depth: " + messagesInQueue + " messages");
+                System.out.println("Active consumer threads: " + activeThreads.get());
+                System.out.println("Active consumers: " + activeConsumers.get());
+                System.out.println("Batch queue size: " + eventBatchQueue.size());
+
+                adjustThreadCount(messagesInQueue);
+
+                monitorChannel.close();
+
+            } catch (Exception e) {
+                System.err.println("Error monitoring queue: " + e.getMessage());
+            }
+        }, 5000, 5000, TimeUnit.MILLISECONDS);
+    }
+
+    private void startCircuitBreakerMonitoring() {
+        scheduledExecutor.scheduleAtFixedRate(() -> {
+            try {
+                System.out.println("\n=== Circuit Breaker Status - " +
+                        LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME) + " ===");
+
+                System.out.println("Consume Message Circuit: " + consumeMessageCircuitBreaker.getState() +
+                        " (Failures: " + consumeMessageCircuitBreaker.getFailureCount() +
+                        ", Successes: " + consumeMessageCircuitBreaker.getSuccessCount() + ")");
+
+                System.out.println("Process Message Circuit: " + processMessageCircuitBreaker.getState() +
+                        " (Failures: " + processMessageCircuitBreaker.getFailureCount() +
+                        ", Successes: " + processMessageCircuitBreaker.getSuccessCount() + ")");
+
+                System.out.println("Total circuit breaker trips: " + circuitBreakerTrips.sum());
+                System.out.println("Successful retries: " + circuitBreakerSuccessfulRetries.sum());
+
+            } catch (Exception e) {
+                System.err.println("Error monitoring circuit breakers: " + e.getMessage());
+            }
+        }, 10000, 10000, TimeUnit.MILLISECONDS);
+    }
+
     private void startStatsReporting() {
         scheduledExecutor.scheduleAtFixedRate(() -> {
             try {
@@ -491,6 +460,12 @@ public class RabbitMQConsumer {
                 long dbOps = databaseOperations.sum();
                 long dbErrors = databaseErrors.sum();
 
+                // Batch processing stats
+                long batches = batchesProcessed.sum();
+                long avgBatchTime = batches > 0 ? batchProcessTime.sum() / batches : 0;
+                long avgBatchSize = batches > 0 ? batchSizes.sum() / batches : 0;
+                int batchQueueSize = eventBatchQueue.size();
+
                 System.out.println("\n=== Performance Statistics - " +
                         LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME) + " ===");
                 System.out.println("Active consumer threads: " + active + " (consumers: " + consumers + ")");
@@ -501,12 +476,16 @@ public class RabbitMQConsumer {
                 System.out.println("Database operations: " + dbOps);
                 System.out.println("Database errors: " + dbErrors);
 
+                // Batch stats
+                System.out.println("Batch processing: " + batches + " batches, avg time: " +
+                        avgBatchTime + "ms, avg size: " + avgBatchSize +
+                        ", queue size: " + batchQueueSize);
+
                 // Memory usage
                 Runtime runtime = Runtime.getRuntime();
                 long usedMemory = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
                 long totalMemory = runtime.totalMemory() / (1024 * 1024);
                 long maxMemory = runtime.maxMemory() / (1024 * 1024);
-
                 System.out.println("Memory usage: " + usedMemory + "MB / " + totalMemory +
                         "MB (Max: " + maxMemory + "MB)");
 
@@ -517,12 +496,35 @@ public class RabbitMQConsumer {
         }, RabbitMQConfig.STATS_INTERVAL_MS, RabbitMQConfig.STATS_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
-    /**
-     * Shutdown the consumer gracefully.
-     */
+    private void adjustThreadCount(int messagesInQueue) {
+        int currentThreads = activeThreads.get();
+
+        if (messagesInQueue > 1000 && currentThreads < maxThreads) {
+            // Calculate threads to add based on queue depth
+            int threadsToAdd = Math.min(
+                    Math.max(5, messagesInQueue / 1000), // Based on queue depth
+                    maxThreads - currentThreads
+            );
+            System.out.println("Adding " + threadsToAdd + " consumer threads due to high queue depth: " + messagesInQueue);
+
+            for (int i = 0; i < threadsToAdd; i++) {
+                startConsumerThread(-1); // -1 indicates a dynamically added thread
+            }
+        } else if (messagesInQueue < RabbitMQConfig.LOW_QUEUE_THRESHOLD && currentThreads > initialThreads) {
+            // Queue is nearly empty, we can reduce threads
+            System.out.println("Queue depth is low. Could reduce by " +
+                    Math.min(RabbitMQConfig.THREADS_TO_REMOVE, currentThreads - initialThreads) +
+                    " threads when current work completes.");
+        }
+    }
+
     public void shutdown() {
         System.out.println("Shutting down RabbitMQ Consumer...");
         running = false;
+
+        // Process any remaining messages in the batch queue
+        System.out.println("Processing final batch of " + eventBatchQueue.size() + " messages");
+        processBatch();
 
         // Close all channels
         for (Channel channel : channels) {
@@ -566,37 +568,35 @@ public class RabbitMQConsumer {
         shutdownLatch.countDown();
     }
 
-    /**
-     * Wait for shutdown to complete.
-     */
     public void waitForShutdown() throws InterruptedException {
         shutdownLatch.await();
     }
 
-    /**
-     * Get the number of messages processed.
-     */
     public long getMessagesProcessed() {
         return messagesProcessed.sum();
     }
 
-    /**
-     * Get the number of processing errors.
-     */
     public long getProcessingErrors() {
         return processingErrors.sum();
     }
 
-    /**
-     * Get the current active thread count.
-     */
     public int getActiveThreads() {
         return activeThreads.get();
     }
 
-    /**
-     * Main method for running the consumer as a standalone application.
-     */
+    public long getBatchesProcessed() {
+        return batchesProcessed.sum();
+    }
+
+    public long getAverageBatchTime() {
+        long batches = batchesProcessed.sum();
+        return batches > 0 ? batchProcessTime.sum() / batches : 0;
+    }
+
+    public int getBatchQueueSize() {
+        return eventBatchQueue.size();
+    }
+
     public static void main(String[] args) {
         try {
             System.out.println("RabbitMQ Consumer application starting...");

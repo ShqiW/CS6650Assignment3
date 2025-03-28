@@ -3,6 +3,7 @@ package upic.consumer.repository.impl;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
+import upic.consumer.model.LiftRideEvent;
 import upic.consumer.repository.RedisConnector;
 import upic.consumer.repository.SkierRepository;
 
@@ -15,31 +16,59 @@ import java.util.stream.Collectors;
 public class RedisSkierRepository implements SkierRepository {
 
     @Override
+    public void recordLiftRideBatch(List<LiftRideEvent> events) {
+        if (events == null || events.isEmpty()) {
+            return;
+        }
+
+        try (Jedis jedis = RedisConnector.getResource()) {
+            Pipeline pipeline = jedis.pipelined();
+
+            for (LiftRideEvent event : events) {
+                int skierId = event.getSkierId();
+                int resortId = event.getResortId();
+                int liftId = event.getLiftId();
+                int seasonId = event.getSeasonId();
+                int dayId = event.getDayId();
+                int time = event.getTime();
+                int vertical = liftId * 10;
+
+                String dayKey = "skier:" + skierId + ":days:" + seasonId;
+                pipeline.sadd(dayKey, String.valueOf(dayId));
+
+                String liftRideKey = "skier:" + skierId + ":day:" + dayId + ":season:" + seasonId + ":lifts";
+                pipeline.rpush(liftRideKey, String.valueOf(liftId));
+
+                String timeKey = "skier:" + skierId + ":day:" + dayId + ":season:" + seasonId + ":time:" + liftId;
+                pipeline.set(timeKey, String.valueOf(time));
+
+                String verticalKey = "skier:" + skierId + ":day:" + dayId + ":season:" + seasonId + ":vertical";
+                pipeline.incrBy(verticalKey, vertical);
+            }
+
+            pipeline.sync();
+        }
+    }
+
+    @Override
     public void recordLiftRide(int skierId, int resortId, int liftId, int seasonId, int dayId, int time) {
-        // 计算垂直高度
         int vertical = liftId * 10;
 
         try (Jedis jedis = RedisConnector.getResource()) {
-            // 使用管道以提高性能
             Pipeline pipeline = jedis.pipelined();
 
-            // 记录滑雪者的滑雪日
             String dayKey = "skier:" + skierId + ":days:" + seasonId;
             pipeline.sadd(dayKey, String.valueOf(dayId));
 
-            // 记录滑雪者在特定日期的乘坐
             String liftRideKey = "skier:" + skierId + ":day:" + dayId + ":season:" + seasonId + ":lifts";
             pipeline.rpush(liftRideKey, String.valueOf(liftId));
 
-            // 记录滑雪时间
             String timeKey = "skier:" + skierId + ":day:" + dayId + ":season:" + seasonId + ":time:" + liftId;
             pipeline.set(timeKey, String.valueOf(time));
 
-            // 更新垂直总和
             String verticalKey = "skier:" + skierId + ":day:" + dayId + ":season:" + seasonId + ":vertical";
             pipeline.incrBy(verticalKey, vertical);
 
-            // 执行所有命令
             pipeline.sync();
         }
     }
